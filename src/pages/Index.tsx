@@ -1,31 +1,43 @@
 import { useState } from "react"
 import { FileImage, Github, Heart, Download, Clock } from "lucide-react"
 import { ThemeToggle } from "@/components/ui/theme-toggle"
-import { ImageUploader } from "@/components/ImageUploader"
+import { FeatureSelector, ConversionFeature } from "@/components/FeatureSelector"
+import { FileUploader } from "@/components/FileUploader"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { useToast } from "@/hooks/use-toast"
-import { convertImagesToPDF, downloadPDF, formatFileSize } from "@/utils/pdfConverter"
+import { convertByFeature, downloadPDF, formatFileSize } from "@/utils/conversionUtils"
 
-interface ImageFile {
+interface UploadedFile {
   id: string
   file: File
-  preview: string
+  preview?: string
   name: string
   size: string
+  type: string
 }
 
 const Index = () => {
+  const [selectedFeature, setSelectedFeature] = useState<ConversionFeature | null>(null)
   const [isConverting, setIsConverting] = useState(false)
   const [progress, setProgress] = useState(0)
   const [lastConversion, setLastConversion] = useState<{
     filename: string
     size: string
-    downloadUrl?: string
+    feature: string
   } | null>(null)
   const { toast } = useToast()
 
-  const handleConvert = async (images: ImageFile[]) => {
+  const handleFeatureSelect = (feature: ConversionFeature) => {
+    setSelectedFeature(feature)
+  }
+
+  const handleBackToFeatures = () => {
+    setSelectedFeature(null)
+  }
+
+  const handleConvert = async (files: UploadedFile[]) => {
+    if (!selectedFeature) return
     try {
       setIsConverting(true)
       setProgress(0)
@@ -35,7 +47,7 @@ const Index = () => {
         setProgress((prev) => Math.min(prev + 10, 90))
       }, 200)
 
-      const pdfBlob = await convertImagesToPDF(images, (progress) => {
+      const resultBlob = await convertByFeature(selectedFeature.id, files, (progress) => {
         setProgress(progress)
       })
 
@@ -44,20 +56,22 @@ const Index = () => {
 
       // Generate filename with timestamp
       const timestamp = new Date().toISOString().slice(0, 10)
-      const filename = `img2pdf-${timestamp}.pdf`
+      const featureName = selectedFeature.title.toLowerCase().replace(/\s+/g, '-')
+      const filename = `${featureName}-${timestamp}.pdf`
 
-      // Download the PDF
-      downloadPDF(pdfBlob, filename)
+      // Download the file
+      downloadPDF(resultBlob, filename)
 
       // Update last conversion info
       setLastConversion({
         filename,
-        size: formatFileSize(pdfBlob.size),
+        size: formatFileSize(resultBlob.size),
+        feature: selectedFeature.title,
       })
 
       toast({
-        title: "PDF created successfully!",
-        description: `Your PDF with ${images.length} images is ready for download.`,
+        title: "Conversion completed successfully!",
+        description: `Your ${selectedFeature.outputType} with ${files.length} file(s) is ready for download.`,
       })
 
       // Reset progress after a delay
@@ -114,40 +128,57 @@ const Index = () => {
         <div className="text-center space-y-6 animate-slide-up">
           <div className="space-y-4">
             <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold text-foreground">
-              Turn images into a single PDF in{" "}
-              <span className="bg-gradient-primary bg-clip-text text-transparent">
-                5 seconds
-              </span>
+              {selectedFeature ? (
+                <>Convert {selectedFeature.inputTypes.join("/")} to {selectedFeature.outputType}</>
+              ) : (
+                <>
+                  Universal File Converter in{" "}
+                  <span className="bg-gradient-primary bg-clip-text text-transparent">
+                    5 seconds
+                  </span>
+                </>
+              )}
             </h1>
             <p className="text-lg sm:text-xl text-muted-foreground max-w-2xl mx-auto">
-              Fast, secure, and completely private. Convert JPG, PNG, WebP, and HEIC images 
-              to PDF without uploading to any server.
+              {selectedFeature ? (
+                selectedFeature.description
+              ) : (
+                "Fast, secure, and completely private. Convert images, documents, presentations, and more without uploading to any server."
+              )}
             </p>
           </div>
 
-          <div className="flex flex-wrap justify-center gap-4 text-sm text-muted-foreground">
-            <div className="flex items-center gap-2">
-              <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-              No file uploads
+          {!selectedFeature && (
+            <div className="flex flex-wrap justify-center gap-4 text-sm text-muted-foreground">
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                No file uploads
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                Processed locally
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                Unlimited conversions
+              </div>
             </div>
-            <div className="flex items-center gap-2">
-              <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-              Processed locally
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-              Unlimited conversions
-            </div>
-          </div>
+          )}
         </div>
 
-        {/* Upload Section */}
+        {/* Feature Selection or File Upload */}
         <div className="animate-scale-in">
-          <ImageUploader 
-            onConvert={handleConvert}
-            isConverting={isConverting}
-            progress={progress}
-          />
+          {selectedFeature ? (
+            <FileUploader
+              feature={selectedFeature}
+              onConvert={handleConvert}
+              isConverting={isConverting}
+              progress={progress}
+              onBack={handleBackToFeatures}
+            />
+          ) : (
+            <FeatureSelector onFeatureSelect={handleFeatureSelect} />
+          )}
         </div>
 
         {/* Last Conversion Info */}
@@ -159,7 +190,7 @@ const Index = () => {
               </div>
               <div>
                 <h3 className="font-semibold text-foreground">Last conversion</h3>
-                <p className="text-sm text-muted-foreground">Successfully created</p>
+                <p className="text-sm text-muted-foreground">{lastConversion.feature} • Successfully created</p>
               </div>
             </div>
             
@@ -183,38 +214,40 @@ const Index = () => {
           </div>
         )}
 
-        {/* Features Grid */}
-        <div className="grid md:grid-cols-3 gap-6 max-w-4xl mx-auto">
-          <div className="bg-card border rounded-xl p-6 text-center shadow-card hover:shadow-glow transition-all duration-300">
-            <div className="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center mx-auto mb-4">
-              <FileImage className="h-6 w-6 text-primary" />
+        {/* Features Grid - Only show when no feature is selected */}
+        {!selectedFeature && (
+          <div className="grid md:grid-cols-3 gap-6 max-w-4xl mx-auto">
+            <div className="bg-card border rounded-xl p-6 text-center shadow-card hover:shadow-glow transition-all duration-300">
+              <div className="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center mx-auto mb-4">
+                <FileImage className="h-6 w-6 text-primary" />
+              </div>
+              <h3 className="font-semibold text-foreground mb-2">Multiple Formats</h3>
+              <p className="text-sm text-muted-foreground">
+                Support for images, documents, presentations, and more
+              </p>
             </div>
-            <h3 className="font-semibold text-foreground mb-2">Multiple Formats</h3>
-            <p className="text-sm text-muted-foreground">
-              Support for JPG, PNG, WebP, and HEIC image formats
-            </p>
-          </div>
 
-          <div className="bg-card border rounded-xl p-6 text-center shadow-card hover:shadow-glow transition-all duration-300">
-            <div className="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center mx-auto mb-4">
-              <Heart className="h-6 w-6 text-primary" />
+            <div className="bg-card border rounded-xl p-6 text-center shadow-card hover:shadow-glow transition-all duration-300">
+              <div className="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center mx-auto mb-4">
+                <Heart className="h-6 w-6 text-primary" />
+              </div>
+              <h3 className="font-semibold text-foreground mb-2">Privacy First</h3>
+              <p className="text-sm text-muted-foreground">
+                All processing happens in your browser. Zero server uploads.
+              </p>
             </div>
-            <h3 className="font-semibold text-foreground mb-2">Privacy First</h3>
-            <p className="text-sm text-muted-foreground">
-              All processing happens in your browser. Zero server uploads.
-            </p>
-          </div>
 
-          <div className="bg-card border rounded-xl p-6 text-center shadow-card hover:shadow-glow transition-all duration-300">
-            <div className="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center mx-auto mb-4">
-              <Download className="h-6 w-6 text-primary" />
+            <div className="bg-card border rounded-xl p-6 text-center shadow-card hover:shadow-glow transition-all duration-300">
+              <div className="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center mx-auto mb-4">
+                <Download className="h-6 w-6 text-primary" />
+              </div>
+              <h3 className="font-semibold text-foreground mb-2">Instant Download</h3>
+              <p className="text-sm text-muted-foreground">
+                Get your converted files immediately with one click
+              </p>
             </div>
-            <h3 className="font-semibold text-foreground mb-2">Instant Download</h3>
-            <p className="text-sm text-muted-foreground">
-              Get your PDF immediately after conversion with one click
-            </p>
           </div>
-        </div>
+        )}
       </main>
 
       {/* Footer */}
@@ -226,7 +259,7 @@ const Index = () => {
                 <div className="flex items-center justify-center w-8 h-8 bg-gradient-primary rounded-lg">
                   <FileImage className="h-4 w-4 text-white" />
                 </div>
-                <span className="font-semibold text-foreground">img2pdf</span>
+                <span className="font-semibold text-foreground">File Converter</span>
               </div>
               <div className="text-sm text-muted-foreground">
                 Made with <Heart className="h-4 w-4 text-red-500 inline mx-1" /> by{" "}
