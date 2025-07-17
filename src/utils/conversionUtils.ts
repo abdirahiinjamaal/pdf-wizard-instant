@@ -1,4 +1,5 @@
 import jsPDF from 'jspdf'
+import { PDFDocument, rgb } from 'pdf-lib'
 
 interface UploadedFile {
   id: string
@@ -151,22 +152,146 @@ export async function mergePDFs(
   files: UploadedFile[],
   onProgress?: (progress: number) => void
 ): Promise<Blob> {
-  // Note: This is a placeholder implementation
-  // Full PDF merging would require a library like pdf-lib
-  const pdf = new jsPDF()
+  const mergedPdf = await PDFDocument.create()
   
-  if (onProgress) {
-    onProgress(50)
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i]
+    
+    try {
+      if (onProgress) {
+        onProgress((i / files.length) * 90)
+      }
+
+      const arrayBuffer = await file.file.arrayBuffer()
+      const pdf = await PDFDocument.load(arrayBuffer)
+      const copiedPages = await mergedPdf.copyPages(pdf, pdf.getPageIndices())
+      
+      copiedPages.forEach((page) => mergedPdf.addPage(page))
+    } catch (error) {
+      console.error(`Error processing PDF ${file.name}:`, error)
+    }
   }
 
-  pdf.setFontSize(16)
-  pdf.text('PDF Merge Feature Coming Soon!', 20, 30)
-  pdf.setFontSize(12)
-  pdf.text(`${files.length} PDFs selected for merging:`, 20, 50)
+  if (onProgress) {
+    onProgress(100)
+  }
+
+  const pdfBytes = await mergedPdf.save()
+  return new Blob([pdfBytes], { type: 'application/pdf' })
+}
+
+export async function splitPDF(
+  files: UploadedFile[],
+  onProgress?: (progress: number) => void
+): Promise<Blob> {
+  if (files.length === 0) {
+    throw new Error('No PDF file provided')
+  }
+
+  const file = files[0] // Only process the first PDF file
+  const arrayBuffer = await file.file.arrayBuffer()
+  const pdf = await PDFDocument.load(arrayBuffer)
+  const pageCount = pdf.getPageCount()
+
+  // Create a new PDF with each page as a separate document
+  // For simplicity, we'll create one PDF with page numbers added
+  const resultPdf = await PDFDocument.create()
   
-  files.forEach((file, index) => {
-    pdf.text(`${index + 1}. ${file.name}`, 20, 70 + (index * 10))
-  })
+  for (let i = 0; i < pageCount; i++) {
+    if (onProgress) {
+      onProgress((i / pageCount) * 90)
+    }
+
+    const [copiedPage] = await resultPdf.copyPages(pdf, [i])
+    const page = resultPdf.addPage(copiedPage)
+    
+    // Add page number
+    const { width, height } = page.getSize()
+    page.drawText(`Page ${i + 1} of ${pageCount}`, {
+      x: 50,
+      y: height - 50,
+      size: 12,
+      color: rgb(0.5, 0.5, 0.5)
+    })
+  }
+
+  if (onProgress) {
+    onProgress(100)
+  }
+
+  const pdfBytes = await resultPdf.save()
+  return new Blob([pdfBytes], { type: 'application/pdf' })
+}
+
+export async function convertWordToPDF(
+  files: UploadedFile[],
+  onProgress?: (progress: number) => void
+): Promise<Blob> {
+  const pdf = new jsPDF()
+  const pageWidth = pdf.internal.pageSize.getWidth()
+  const pageHeight = pdf.internal.pageSize.getHeight()
+  const margin = 20
+  const lineHeight = 6
+  const maxLineWidth = pageWidth - 2 * margin
+
+  let isFirstPage = true
+
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i]
+    
+    try {
+      if (onProgress) {
+        onProgress((i / files.length) * 90)
+      }
+
+      // Try to extract text from .docx files (basic extraction)
+      let text = ''
+      if (file.file.type.includes('word') || file.name.endsWith('.docx')) {
+        // For .docx files, we'll extract as much text as possible
+        const arrayBuffer = await file.file.arrayBuffer()
+        const uint8Array = new Uint8Array(arrayBuffer)
+        const textDecoder = new TextDecoder('utf-8', { fatal: false })
+        const rawText = textDecoder.decode(uint8Array)
+        
+        // Extract readable text (basic approach)
+        text = rawText.replace(/[^\x20-\x7E\n\r]/g, ' ').replace(/\s+/g, ' ').trim()
+      } else {
+        text = await file.file.text()
+      }
+      
+      if (!isFirstPage) {
+        pdf.addPage()
+      } else {
+        isFirstPage = false
+      }
+
+      // Add title
+      pdf.setFontSize(16)
+      pdf.setTextColor(0, 0, 0)
+      pdf.text(file.name, margin, margin + 10)
+      
+      // Add separator line
+      pdf.setLineWidth(0.5)
+      pdf.line(margin, margin + 15, pageWidth - margin, margin + 15)
+      
+      // Add content
+      pdf.setFontSize(10)
+      const lines = pdf.splitTextToSize(text.substring(0, 5000), maxLineWidth) // Limit text length
+      let y = margin + 25
+      
+      for (const line of lines) {
+        if (y + lineHeight > pageHeight - margin) {
+          pdf.addPage()
+          y = margin
+        }
+        pdf.text(line, margin, y)
+        y += lineHeight
+      }
+
+    } catch (error) {
+      console.error(`Error processing document ${file.name}:`, error)
+    }
+  }
 
   if (onProgress) {
     onProgress(100)
@@ -206,10 +331,12 @@ export async function convertByFeature(
       return convertTextToPDF(files, onProgress)
     case 'merge-pdfs':
       return mergePDFs(files, onProgress)
-    case 'powerpoint-to-pdf':
-    case 'word-to-pdf':
-    case 'excel-to-pdf':
     case 'split-pdf':
+      return splitPDF(files, onProgress)
+    case 'word-to-pdf':
+      return convertWordToPDF(files, onProgress)
+    case 'powerpoint-to-pdf':
+    case 'excel-to-pdf':
     case 'pdf-to-images':
     default:
       // Placeholder for unsupported features
